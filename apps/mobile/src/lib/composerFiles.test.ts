@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+} from "@t3tools/contracts";
 import type { ImagePickerAsset } from "expo-image-picker";
 
 const mocks = vi.hoisted(() => ({
   documentUri: "file:///documents",
   pickFile: vi.fn(),
   pickMedia: vi.fn(),
+  takePhoto: vi.fn(),
+  requestCameraPermission: vi.fn(),
   copy: vi.fn(),
   delete: vi.fn(),
   open: vi.fn(),
@@ -80,7 +85,11 @@ vi.mock("expo-file-system", () => {
   };
 });
 
-vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: mocks.pickMedia }));
+vi.mock("expo-image-picker", () => ({
+  launchImageLibraryAsync: mocks.pickMedia,
+  launchCameraAsync: mocks.takePhoto,
+  requestCameraPermissionsAsync: mocks.requestCameraPermission,
+}));
 vi.mock("expo-document-picker", () => ({ getDocumentAsync: mocks.pickFile }));
 vi.mock("expo-image-manipulator", () => ({
   SaveFormat: { JPEG: "jpeg", PNG: "png", WEBP: "webp" },
@@ -103,6 +112,8 @@ describe("composer file attachments", () => {
     mocks.documentUri = "file:///documents";
     mocks.pickFile.mockReset();
     mocks.pickMedia.mockReset();
+    mocks.takePhoto.mockReset();
+    mocks.requestCameraPermission.mockReset();
     mocks.copy.mockReset();
     mocks.delete.mockReset();
     mocks.open.mockReset();
@@ -111,7 +122,7 @@ describe("composer file attachments", () => {
     mocks.size.mockImplementation((uri: string) => (uri.startsWith("content:") ? null : 42));
   });
 
-  describe("photo library image conversion", () => {
+  describe("media image conversion", () => {
     const rendered = { uri: "file:///cache/ImageManipulator/photo.jpg", base64: "/9j/2Q==" };
     const photo: ImagePickerAsset = {
       uri: "file:///picker/photo.heic",
@@ -307,6 +318,175 @@ describe("composer file attachments", () => {
       await expect(pickComposerImages({ existingCount: 0 })).resolves.toEqual({
         images: [],
         error: "Failed to read 'photo.HEIC'.",
+      });
+    });
+
+    describe("camera photos", () => {
+      beforeEach(() => {
+        mocks.requestCameraPermission.mockResolvedValue({ granted: true, canAskAgain: true });
+      });
+
+      it("attaches captured JPEG bytes and previews the camera file", async () => {
+        mocks.takePhoto.mockResolvedValue({
+          canceled: false,
+          assets: [{ ...photo, fileName: "photo.jpg", mimeType: "image/jpeg" }],
+        });
+        mocks.readBase64.mockResolvedValue(rendered.base64);
+
+        const result = await pickComposerMedia({ source: "camera", existingCount: 0 });
+
+        expect(result).toEqual({
+          attachments: [
+            {
+              id: "attachment-id",
+              type: "image",
+              name: "photo.jpg",
+              mimeType: "image/jpeg",
+              sizeBytes: 4,
+              dataUrl: `data:image/jpeg;base64,${rendered.base64}`,
+              previewUri: photo.uri,
+            },
+          ],
+          error: null,
+        });
+        expect(mocks.takePhoto).toHaveBeenCalledWith({
+          mediaTypes: ["images"],
+          base64: false,
+          quality: 1,
+        });
+        expect(mocks.pickMedia).not.toHaveBeenCalled();
+        expect(isForegroundHandoffActive()).toBe(false);
+      });
+
+      it.each([
+        { mimeType: "image/heic", fileName: "photo.HEIC", size: 42 },
+        {
+          mimeType: "image/jpeg",
+          fileName: "photo.jpg",
+          size: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1,
+        },
+      ])("normalizes a captured $fileName of $size bytes to JPEG", async (input) => {
+        mocks.takePhoto.mockResolvedValue({ canceled: false, assets: [{ ...photo, ...input }] });
+        mocks.size.mockReturnValue(input.size);
+
+        const result = await pickComposerMedia({ source: "camera", existingCount: 0 });
+
+        expect(result).toEqual({
+          attachments: [
+            expect.objectContaining({
+              type: "image",
+              name: "photo.jpg",
+              mimeType: "image/jpeg",
+              sizeBytes: 4,
+              dataUrl: `data:image/jpeg;base64,${rendered.base64}`,
+              previewUri: rendered.uri,
+            }),
+          ],
+          error: null,
+        });
+        expect(mocks.readBase64).not.toHaveBeenCalled();
+      });
+
+      it.each([true, false])("reports denied access with canAskAgain=%s", async (canAskAgain) => {
+        mocks.requestCameraPermission.mockImplementation(async () => {
+          expect(isForegroundHandoffActive()).toBe(true);
+          return { granted: false, canAskAgain };
+        });
+
+        const result = await pickComposerMedia({ source: "camera", existingCount: 0 });
+
+        expect(result.attachments).toEqual([]);
+        expect(result.error).toMatch(/camera access/i);
+        if (!canAskAgain) expect(result.error).toMatch(/T3 Code.*Settings/);
+        expect(mocks.takePhoto).not.toHaveBeenCalled();
+        expect(mocks.pickMedia).not.toHaveBeenCalled();
+        expect(isForegroundHandoffActive()).toBe(false);
+      });
+
+      it("keeps the foreground handoff through permission and capture, then releases on cancellation", async () => {
+        mocks.requestCameraPermission.mockImplementation(async () => {
+          expect(isForegroundHandoffActive()).toBe(true);
+          await Promise.resolve();
+          expect(isForegroundHandoffActive()).toBe(true);
+          return { granted: true, canAskAgain: true };
+        });
+        mocks.takePhoto.mockImplementation(async () => {
+          expect(isForegroundHandoffActive()).toBe(true);
+          await Promise.resolve();
+          expect(isForegroundHandoffActive()).toBe(true);
+          return { canceled: true, assets: null };
+        });
+
+        await expect(pickComposerMedia({ source: "camera", existingCount: 0 })).resolves.toEqual({
+          attachments: [],
+          error: null,
+        });
+
+        expect(mocks.takePhoto).toHaveBeenCalledOnce();
+        expect(mocks.pickMedia).not.toHaveBeenCalled();
+        expect(isForegroundHandoffActive()).toBe(false);
+      });
+
+      it.each(["permission", "launch"])(
+        "reports %s failure and releases the foreground handoff",
+        async (stage) => {
+          const failure = async () => {
+            expect(isForegroundHandoffActive()).toBe(true);
+            throw new Error("Camera unavailable");
+          };
+          if (stage === "permission") mocks.requestCameraPermission.mockImplementation(failure);
+          else mocks.takePhoto.mockImplementation(failure);
+
+          await expect(pickComposerMedia({ source: "camera", existingCount: 0 })).resolves.toEqual({
+            attachments: [],
+            error: "Camera unavailable",
+          });
+
+          if (stage === "permission") expect(mocks.takePhoto).not.toHaveBeenCalled();
+          expect(mocks.pickMedia).not.toHaveBeenCalled();
+          expect(isForegroundHandoffActive()).toBe(false);
+        },
+      );
+
+      it("checks attachment capacity before requesting access or opening the camera", async () => {
+        const result = await pickComposerMedia({
+          source: "camera",
+          existingCount: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+        });
+
+        expect(result.attachments).toEqual([]);
+        expect(result.error).toMatch(/attach up to/);
+        expect(mocks.requestCameraPermission).not.toHaveBeenCalled();
+        expect(mocks.takePhoto).not.toHaveBeenCalled();
+        expect(mocks.pickMedia).not.toHaveBeenCalled();
+        expect(isForegroundHandoffActive()).toBe(false);
+      });
+
+      it("rejects an unexpected camera video even when the server supports video uploads", async () => {
+        mocks.takePhoto.mockResolvedValue({
+          canceled: false,
+          assets: [{ ...photo, type: "video", fileName: "clip.mov", mimeType: "video/quicktime" }],
+        });
+
+        const result = await pickComposerMedia({
+          source: "camera",
+          existingCount: 0,
+          maxVideoBytes: 50 * 1024 * 1024,
+        });
+
+        expect(result).toEqual({
+          attachments: [],
+          error: "Video attachments are unavailable here.",
+        });
+        expect(mocks.takePhoto).toHaveBeenCalledWith({
+          mediaTypes: ["images"],
+          base64: false,
+          quality: 1,
+        });
+        expect(mocks.copy).not.toHaveBeenCalled();
+        expect(mocks.readBase64).not.toHaveBeenCalled();
+        expect(mocks.pickMedia).not.toHaveBeenCalled();
+        expect(isForegroundHandoffActive()).toBe(false);
       });
     });
   });

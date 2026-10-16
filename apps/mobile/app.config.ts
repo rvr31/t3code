@@ -19,6 +19,8 @@ const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
+const cameraPermission =
+  "Allow T3 Code to access your camera to attach photos and scan pairing QR codes.";
 
 if (
   isIosPersonalTeamBuild &&
@@ -386,13 +388,16 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
+        cameraPermission,
         microphonePermission: false,
         barcodeScannerEnabled: true,
         recordAudioAndroid: false,
       },
     ],
-    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
+    [
+      "expo-image-picker",
+      { cameraPermission, photosPermission: false, microphonePermission: false },
+    ],
     [
       "expo-splash-screen",
       {
