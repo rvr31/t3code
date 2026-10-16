@@ -353,6 +353,7 @@ const config: ExpoConfig = {
     [
       "expo-notifications",
       {
+        enableRemoteNotifications: !isIosPersonalTeamBuild,
         icon: variant.assets.androidNotificationIcon,
         color: variant.assets.androidNotificationColor,
         mode: APP_VARIANT === "development" ? "development" : "production",

@@ -98,7 +98,9 @@ The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin.
 ## Install a local build on your iPhone
 
 Use a Mac with Xcode and your Apple account added in Xcode settings. A paid Apple Developer
-membership works with this recipe too. Install dependencies with `vp i` from the repository root.
+membership works with this recipe too. Start from a fresh clone with no generated `apps/mobile/ios`
+folder. Existing native files can retain upstream signing settings and extension targets.
+Install dependencies with `vp i` from the repository root.
 Connect your iPhone by USB, accept **Trust This Computer**, and enable **Developer Mode** in the
 phone's **Settings > Privacy & Security**.
 
