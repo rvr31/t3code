@@ -66,30 +66,6 @@ After changing a native dependency patch, rerun CocoaPods before rebuilding an e
 project. pnpm gives each patch hash a new package path; Pods can otherwise keep compiling the
 previous directory.
 
-If your Xcode account only has a Personal Team, use a bundle identifier you control and opt into the
-reduced-capability local build. Personal Team builds omit the widget and share extensions, push
-entitlement, and native Sign in with Apple entitlement; builds without this opt-in are unchanged.
-
-```bash
-T3CODE_IOS_PERSONAL_TEAM=1 \
-T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.t3code.dev \
-vp run ios:dev
-```
-
-Build and install a self-contained Release app that does not need Metro:
-
-```bash
-vp run ios:release
-```
-
-The Personal Team equivalent also needs a unique bundle identifier:
-
-```bash
-T3CODE_IOS_PERSONAL_TEAM=1 \
-T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.t3code \
-vp run ios:release
-```
-
 Build and run the local iOS preview app:
 
 ```bash
@@ -118,6 +94,39 @@ node ../../scripts/mobile-native-static-check.ts
 ```
 
 The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin. Missing native tools are reported as warnings and skipped locally. CI installs the default toolset from `apps/mobile/Brewfile` before running the native checks.
+
+## Install a local build on your iPhone
+
+Use a Mac with Xcode and your Apple account added in Xcode settings. A paid Apple Developer
+membership works with this recipe too. Install dependencies with `vp i` from the repository root.
+Connect your iPhone by USB, accept **Trust This Computer**, and enable **Developer Mode** in the
+phone's **Settings > Privacy & Security**.
+
+The `T3CODE_IOS_PERSONAL_TEAM=1` option lets Expo or Xcode select your signing team and uses your
+own bundle identifier. It omits widgets, the share extension, push notifications, Sign in with Apple,
+and upstream associated domains. It also disables Expo updates so this local build keeps its bundled code.
+
+From `apps/mobile`, replace the example bundle identifier with a unique identifier you control,
+then run these commands in the same terminal:
+
+```bash
+export APP_VARIANT=development
+export T3CODE_IOS_PERSONAL_TEAM=1
+export T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.t3code.camera
+pnpm exec expo prebuild --platform ios
+pnpm exec expo run:ios --configuration Release --no-bundler --device
+```
+
+Select your connected iPhone when Expo prompts. If automatic signing needs setup, open the generated
+`ios/*.xcworkspace` in Xcode. Select your team under **Signing & Capabilities** for the app target,
+enable automatic signing, then rerun the last command with the same exported variables.
+
+This installs a separate **T3 Code Dev** app with a bundled Release build that runs without Metro.
+Expo Go is unsupported. Open the app and pair it with your existing T3 Code host over your local
+network or Tailscale. T3 Connect is not configured automatically for a local build.
+
+For Fast Refresh instead, keep the same exported variables and run
+`pnpm exec expo run:ios --device`, then use `vp run dev:client` for later Metro sessions.
 
 ## EAS Builds
 
